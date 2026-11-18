@@ -30,6 +30,9 @@ export default defineConfig({
         navigateFallback: 'index.html',
         // HTML 与导航请求走网络优先，避免发版后看到旧页面
         navigateFallbackDenylist: [/^\/api\//],
+        // 显式声明预缓存范围：JS/CSS/HTML + 图标与插画 SVG，保证离线可用
+        globPatterns: ['**/*.{js,css,html,svg,webmanifest}'],
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.mode === 'navigate',
