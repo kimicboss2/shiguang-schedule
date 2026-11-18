@@ -19,10 +19,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Plus, Swords, Trash2, X } from 'lucide-react'
+import { Plus, Sparkles, Swords, Trash2, X } from 'lucide-react'
+import { toast } from 'sonner'
 import type { CategoryId, EventDraft, Reminder, ScheduleEvent, Subtask } from '@/types'
 import { CATEGORY_META, CATEGORY_ORDER, REMINDER_META } from '@/lib/schedule-utils'
 import { useSchedule } from '@/lib/store'
+import { chatComplete, extractJson, isAiReady, loadAiConfig } from '@/lib/ai'
 import { cn } from '@/lib/utils'
 
 export interface DialogState {
@@ -38,6 +40,8 @@ interface Props {
   onClose: () => void
   onSave: (draft: EventDraft) => void
   onDelete: (id: string) => void
+  /** 未配置 AI 时打开设置 */
+  onNeedAiConfig: () => void
 }
 
 function subId() {
@@ -57,19 +61,21 @@ const emptyDraft = (prefill?: Partial<EventDraft>): EventDraft => ({
   subtasks: prefill?.subtasks ?? [],
 })
 
-export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
+export function EventDialog({ state, onClose, onSave, onDelete, onNeedAiConfig }: Props) {
   const { goals } = useSchedule()
   const editing = state.event
   const [draft, setDraft] = useState<EventDraft>(emptyDraft())
   const [error, setError] = useState('')
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [subtaskInput, setSubtaskInput] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
 
   useEffect(() => {
     if (!state.open) return
     setConfirmingDelete(false)
     setError('')
     setSubtaskInput('')
+    setAiLoading(false)
     if (state.event) {
       const e = state.event
       setDraft({
@@ -99,6 +105,45 @@ export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
     const sub: Subtask = { id: subId(), title, done: false }
     setDraft((d) => ({ ...d, subtasks: [...d.subtasks, sub] }))
     setSubtaskInput('')
+  }
+
+  /** AI 拆解：把任务标题交给模型，返回 3–6 个子任务 */
+  const aiBreakdown = async () => {
+    const cfg = loadAiConfig()
+    if (!isAiReady(cfg)) {
+      toast.error('请先配置 AI 助手')
+      onNeedAiConfig()
+      return
+    }
+    if (!draft.title.trim()) {
+      setError('先填写标题，AI 才能帮你拆解')
+      return
+    }
+    setError('')
+    setAiLoading(true)
+    try {
+      const raw = await chatComplete(
+        cfg,
+        '你是任务拆解助手。把用户给出的待办任务拆解成 3 到 6 个可执行的小步骤，每步一句话、动词开头、15 字以内、循序渐进。只输出 JSON：{"subtasks":["步骤1","步骤2"]}，不要输出其他内容。',
+        `任务：${draft.title}${draft.notes.trim() ? `\n备注：${draft.notes.trim()}` : ''}`,
+      )
+      const parsed = extractJson<{ subtasks?: unknown }>(raw)
+      const list = Array.isArray(parsed.subtasks)
+        ? parsed.subtasks
+            .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+            .slice(0, 8)
+        : []
+      if (list.length === 0) throw new Error('AI 没有给出可用步骤，请重试')
+      setDraft((d) => ({
+        ...d,
+        subtasks: [...d.subtasks, ...list.map((t) => ({ id: subId(), title: t.trim(), done: false }))],
+      }))
+      toast.success(`AI 拆出了 ${list.length} 个子任务，可继续增删`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'AI 拆解失败，请重试')
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   const submit = () => {
@@ -251,6 +296,15 @@ export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
                   BOSS 战 · {draft.subtasks.filter((s) => s.done).length}/{draft.subtasks.length}
                 </span>
               )}
+              <button
+                type="button"
+                onClick={aiBreakdown}
+                disabled={aiLoading}
+                className="ml-auto inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Sparkles className={cn('h-3.5 w-3.5', aiLoading && 'animate-spin')} />
+                {aiLoading ? '拆解中…' : 'AI 拆解'}
+              </button>
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
               困难任务拆成小步骤逐个击破；子任务 ≥2 个时成为 BOSS，全部完成有额外经验。
