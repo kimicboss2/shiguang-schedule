@@ -19,9 +19,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Trash2 } from 'lucide-react'
-import type { CategoryId, EventDraft, Reminder, ScheduleEvent } from '@/types'
+import { Plus, Swords, Trash2, X } from 'lucide-react'
+import type { CategoryId, EventDraft, Reminder, ScheduleEvent, Subtask } from '@/types'
 import { CATEGORY_META, CATEGORY_ORDER, REMINDER_META } from '@/lib/schedule-utils'
+import { useSchedule } from '@/lib/store'
 import { cn } from '@/lib/utils'
 
 export interface DialogState {
@@ -39,6 +40,10 @@ interface Props {
   onDelete: (id: string) => void
 }
 
+function subId() {
+  return `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+}
+
 const emptyDraft = (prefill?: Partial<EventDraft>): EventDraft => ({
   title: '',
   date: prefill?.date ?? new Date().toISOString().slice(0, 10),
@@ -48,18 +53,23 @@ const emptyDraft = (prefill?: Partial<EventDraft>): EventDraft => ({
   category: prefill?.category ?? 'work',
   notes: prefill?.notes ?? '',
   reminder: prefill?.reminder ?? 'none',
+  goalId: prefill?.goalId ?? null,
+  subtasks: prefill?.subtasks ?? [],
 })
 
 export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
+  const { goals } = useSchedule()
   const editing = state.event
   const [draft, setDraft] = useState<EventDraft>(emptyDraft())
   const [error, setError] = useState('')
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [subtaskInput, setSubtaskInput] = useState('')
 
   useEffect(() => {
     if (!state.open) return
     setConfirmingDelete(false)
     setError('')
+    setSubtaskInput('')
     if (state.event) {
       const e = state.event
       setDraft({
@@ -72,6 +82,8 @@ export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
         category: e.category,
         notes: e.notes,
         reminder: e.reminder,
+        goalId: e.goalId,
+        subtasks: e.subtasks,
       })
     } else {
       setDraft(emptyDraft(state.prefill))
@@ -80,6 +92,14 @@ export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
 
   const set = <K extends keyof EventDraft>(key: K, value: EventDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
+
+  const addSubtask = () => {
+    const title = subtaskInput.trim()
+    if (!title) return
+    const sub: Subtask = { id: subId(), title, done: false }
+    setDraft((d) => ({ ...d, subtasks: [...d.subtasks, sub] }))
+    setSubtaskInput('')
+  }
 
   const submit = () => {
     if (!draft.title.trim()) {
@@ -99,7 +119,7 @@ export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
 
   return (
     <Dialog open={state.open} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="anim-pop sm:max-w-[460px]">
+      <DialogContent className="anim-pop max-h-[90dvh] overflow-y-auto sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>{editing ? '编辑日程' : '新建日程'}</DialogTitle>
           <DialogDescription>
@@ -195,6 +215,87 @@ export function EventDialog({ state, onClose, onSave, onDelete }: Props) {
               </div>
             </div>
           )}
+
+          <div className="grid gap-1.5">
+            <Label>关联长期目标</Label>
+            <Select
+              value={draft.goalId ?? 'none'}
+              onValueChange={(v) => set('goalId', v === 'none' ? null : v)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">不关联</SelectItem>
+                {goals.map((g) => (
+                  <SelectItem key={g.id} value={g.id}>
+                    {g.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {goals.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                还没有长期目标，可在「成长」视图创建。
+              </p>
+            )}
+          </div>
+
+          {/* 困难任务拆解 */}
+          <div className="grid gap-1.5 rounded-md border p-3">
+            <div className="flex items-center gap-1.5">
+              <Swords className="h-4 w-4 text-primary" />
+              <Label>任务拆解</Label>
+              {draft.subtasks.length >= 2 && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                  BOSS 战 · {draft.subtasks.filter((s) => s.done).length}/{draft.subtasks.length}
+                </span>
+              )}
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              困难任务拆成小步骤逐个击破；子任务 ≥2 个时成为 BOSS，全部完成有额外经验。
+            </p>
+            {draft.subtasks.length > 0 && (
+              <ul className="space-y-1">
+                {draft.subtasks.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center gap-2 rounded-md bg-muted/60 px-2 py-1.5 text-sm"
+                  >
+                    <span className={cn('min-w-0 flex-1 truncate', s.done && 'line-through opacity-50')}>
+                      {s.title}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`删除子任务「${s.title}」`}
+                      onClick={() =>
+                        setDraft((d) => ({ ...d, subtasks: d.subtasks.filter((x) => x.id !== s.id) }))
+                      }
+                      className="cursor-pointer text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-2">
+              <Input
+                placeholder="添加一个子步骤，回车确认"
+                value={subtaskInput}
+                onChange={(e) => setSubtaskInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addSubtask()
+                  }
+                }}
+              />
+              <Button type="button" variant="outline" size="icon" aria-label="添加子任务" onClick={addSubtask}>
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
 
           <div className="grid gap-1.5">
             <Label>提醒</Label>
