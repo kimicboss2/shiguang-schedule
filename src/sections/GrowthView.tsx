@@ -1,23 +1,45 @@
 import { useMemo, useState } from 'react'
-import { CalendarClock, Flame, Plus, Sparkles, Swords, Target, Trash2, Trophy } from 'lucide-react'
+import { Bot, CalendarClock, Flame, Loader2, Plus, Sparkles, Swords, Target, Trash2, Trophy } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import type { Goal } from '@/types'
 import { useSchedule } from '@/lib/store'
 import { isBoss, levelFromXp, monsterHp, streakFromLog } from '@/lib/game-utils'
-import { parseISODate, todayISO } from '@/lib/schedule-utils'
+import { addDays, parseISODate, toISODate, todayISO } from '@/lib/schedule-utils'
+import { chatComplete, extractJson, isAiReady, loadAiConfig } from '@/lib/ai'
 import { cn } from '@/lib/utils'
 
 interface Props {
   onOpenEvent: (id: string) => void
+  onOpenAiSettings: () => void
 }
 
-export function GrowthView({ onOpenEvent }: Props) {
-  const { events, goals, xpLog, totalXp, newGoal, upsertGoal, deleteGoal } = useSchedule()
+interface PlanStep {
+  title: string
+  date: string
+  note: string
+  checked: boolean
+}
+
+export function GrowthView({ onOpenEvent, onOpenAiSettings }: Props) {
+  const { events, goals, xpLog, totalXp, newGoal, upsertGoal, deleteGoal, upsertEvent } = useSchedule()
   const [goalTitle, setGoalTitle] = useState('')
   const [goalDeadline, setGoalDeadline] = useState('')
   const [goalError, setGoalError] = useState('')
   const [confirmingGoal, setConfirmingGoal] = useState<string | null>(null)
+  const [planLoading, setPlanLoading] = useState<string | null>(null)
+  const [planFor, setPlanFor] = useState<Goal | null>(null)
+  const [planSteps, setPlanSteps] = useState<PlanStep[]>([])
 
   const level = levelFromXp(totalXp)
   const streak = streakFromLog(xpLog)
@@ -58,44 +80,115 @@ export function GrowthView({ onOpenEvent }: Props) {
     setGoalError('')
   }
 
+  /** AI 规划：为目标生成循序渐进的行动步骤 */
+  const planGoal = async (goal: Goal) => {
+    const cfg = loadAiConfig()
+    if (!isAiReady(cfg)) {
+      toast.error('请先配置 AI 助手')
+      onOpenAiSettings()
+      return
+    }
+    setPlanLoading(goal.id)
+    try {
+      const raw = await chatComplete(
+        cfg,
+        '你是行动计划助手。为用户的一个长期目标生成 3 到 5 个循序渐进的行动步骤，每步是可以直接放进日程的具体行动。只输出 JSON：{"steps":[{"title":"步骤标题，15 字以内","offset":7,"note":"一句话说明"}]}。offset 是建议距今天数（整数，递增，考虑截止期限）。不要输出其他内容。',
+        `目标：${goal.title}\n今天：${today}\n截止：${goal.deadline || '未设截止'}`,
+      )
+      const parsed = extractJson<{ steps?: unknown }>(raw)
+      const list = Array.isArray(parsed.steps) ? parsed.steps : []
+      const steps: PlanStep[] = []
+      for (const item of list.slice(0, 6)) {
+        if (typeof item !== 'object' || item === null) continue
+        const it = item as { title?: unknown; offset?: unknown; note?: unknown }
+        if (typeof it.title !== 'string' || !it.title.trim()) continue
+        const offset =
+          typeof it.offset === 'number' && Number.isFinite(it.offset)
+            ? Math.max(0, Math.min(365, Math.round(it.offset)))
+            : 7
+        steps.push({
+          title: it.title.trim(),
+          date: toISODate(addDays(new Date(), offset)),
+          note: typeof it.note === 'string' ? it.note.trim() : '',
+          checked: true,
+        })
+      }
+      if (steps.length === 0) throw new Error('AI 没有给出可用步骤，请重试')
+      setPlanFor(goal)
+      setPlanSteps(steps)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'AI 规划失败，请重试')
+    } finally {
+      setPlanLoading(null)
+    }
+  }
+
+  const applyPlan = () => {
+    if (!planFor) return
+    const chosen = planSteps.filter((s) => s.checked)
+    for (const s of chosen) {
+      upsertEvent({
+        title: s.title,
+        date: s.date,
+        allDay: true,
+        start: '',
+        end: '',
+        category: 'other',
+        notes: s.note,
+        reminder: 'none',
+        goalId: planFor.id,
+        subtasks: [],
+      })
+    }
+    toast.success(`已把 ${chosen.length} 个步骤加入日程`, { description: `关联目标「${planFor.title}」` })
+    setPlanFor(null)
+    setPlanSteps([])
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[720px] px-4 py-6 md:px-8">
         {/* 等级面板 */}
-        <section
-          aria-label="等级面板"
-          className="overflow-hidden rounded-xl border bg-card"
-        >
-          <div className="flex items-center gap-4 p-5">
-            <div
+        <section aria-label="等级面板" className="overflow-hidden rounded-xl border bg-card">
+          <div className="relative">
+            <img
+              src="./img/banner-cosmos.svg"
+              alt=""
               aria-hidden
-              className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl text-white shadow-sm"
-              style={{ background: 'linear-gradient(135deg,#5541EA 0%,#8B7CFF 100%)' }}
-            >
-              <Trophy className="h-7 w-7" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
-                <span className="text-2xl font-bold tracking-tight">Lv.{level.level}</span>
-                <span className="truncate text-sm font-medium text-primary">{level.title}</span>
+              className="absolute inset-0 h-full w-full object-cover object-[center_30%]"
+            />
+            <div className="absolute inset-0 bg-gradient-to-r from-card via-card/85 to-card/25" />
+            <div className="relative flex items-center gap-4 p-5">
+              <div
+                aria-hidden
+                className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl text-white shadow-sm"
+                style={{ background: 'linear-gradient(135deg,#5541EA 0%,#8B7CFF 100%)' }}
+              >
+                <Trophy className="h-7 w-7" />
               </div>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-500"
-                  style={{ width: `${Math.round((level.intoLevel / level.span) * 100)}%` }}
-                />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold tracking-tight">Lv.{level.level}</span>
+                  <span className="truncate text-sm font-medium text-primary">{level.title}</span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-500"
+                    style={{ width: `${Math.round((level.intoLevel / level.span) * 100)}%` }}
+                  />
+                </div>
+                <div className="tnum mt-1 text-xs text-muted-foreground">
+                  {totalXp} XP · 距 Lv.{level.level + 1} 还需 {level.nextLevelAt - totalXp} XP
+                </div>
               </div>
-              <div className="tnum mt-1 text-xs text-muted-foreground">
-                {totalXp} XP · 距 Lv.{level.level + 1} 还需 {level.nextLevelAt - totalXp} XP
+              <div className="flex shrink-0 flex-col items-center rounded-lg bg-background/70 px-3 py-2 backdrop-blur-sm">
+                <Flame className={cn('h-5 w-5', streak > 0 ? 'text-[#FF6B00]' : 'text-muted-foreground')} />
+                <span className="tnum text-sm font-bold">{streak}</span>
+                <span className="text-[10px] text-muted-foreground">连续天数</span>
               </div>
-            </div>
-            <div className="flex shrink-0 flex-col items-center rounded-lg bg-muted/60 px-3 py-2">
-              <Flame className={cn('h-5 w-5', streak > 0 ? 'text-[#FF6B00]' : 'text-muted-foreground')} />
-              <span className="tnum text-sm font-bold">{streak}</span>
-              <span className="text-[10px] text-muted-foreground">连续天数</span>
             </div>
           </div>
-          <div className="tnum flex divide-x border-t text-center text-sm">
+          <div className="tnum relative flex divide-x border-t bg-card text-center text-sm">
             <Stat label="总经验" value={totalXp} />
             <Stat label="已完成任务" value={doneCount} />
             <Stat label="进行中 BOSS" value={bosses.length} />
@@ -106,9 +199,12 @@ export function GrowthView({ onOpenEvent }: Props) {
         <section className="mt-6" aria-label="BOSS 挑战">
           <SectionTitle icon={<Swords className="h-4 w-4" />} text="BOSS 挑战" />
           {bosses.length === 0 ? (
-            <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-              暂无进行中的 BOSS。给任务拆出 2 个以上子任务，它就会变成 BOSS。
-            </p>
+            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-6 text-center">
+              <img src="./img/boss-beast.svg" alt="" aria-hidden className="h-20 w-20 rounded-2xl object-cover opacity-90" />
+              <p className="text-sm text-muted-foreground">
+                暂无进行中的 BOSS。给任务拆出 2 个以上子任务，它就会变成 BOSS。
+              </p>
+            </div>
           ) : (
             <ul className="space-y-2">
               {bosses.map(({ event, hp }) => {
@@ -119,20 +215,30 @@ export function GrowthView({ onOpenEvent }: Props) {
                       onClick={() => onOpenEvent(event.id)}
                       className="w-full cursor-pointer rounded-lg border bg-card p-3.5 text-left transition-transform duration-150 hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="min-w-0 truncate text-sm font-medium">{event.title}</span>
-                        <span className="tnum shrink-0 text-xs text-muted-foreground">
-                          {event.date.slice(5)} · HP {hp.remaining}/{hp.total}
-                        </span>
-                      </div>
-                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full bg-destructive transition-all duration-500"
-                          style={{ width: `${100 - pct}%` }}
+                      <div className="flex items-center gap-3">
+                        <img
+                          src="./img/boss-beast.svg"
+                          alt=""
+                          aria-hidden
+                          className="h-12 w-12 shrink-0 rounded-lg object-cover"
                         />
-                      </div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">
-                        每完成一个子任务削减一格血量，清零即击败 BOSS（+额外经验）
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="min-w-0 truncate text-sm font-medium">{event.title}</span>
+                            <span className="tnum shrink-0 text-xs text-muted-foreground">
+                              {event.date.slice(5)} · HP {hp.remaining}/{hp.total}
+                            </span>
+                          </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full rounded-full bg-destructive transition-all duration-500"
+                              style={{ width: `${100 - pct}%` }}
+                            />
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            每完成一个子任务削减一格血量，清零即击败 BOSS（+额外经验）
+                          </div>
+                        </div>
                       </div>
                     </button>
                   </li>
@@ -144,7 +250,16 @@ export function GrowthView({ onOpenEvent }: Props) {
 
         {/* 长期目标 */}
         <section className="mt-6" aria-label="长期目标">
-          <SectionTitle icon={<Target className="h-4 w-4" />} text="长期目标" />
+          <div className="mb-2 flex items-center justify-between">
+            <SectionTitle icon={<Target className="h-4 w-4" />} text="长期目标" />
+            <button
+              onClick={onOpenAiSettings}
+              className="inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Bot className="h-3.5 w-3.5" />
+              AI 助手设置
+            </button>
+          </div>
           <div className="rounded-lg border bg-card p-4">
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
@@ -175,9 +290,12 @@ export function GrowthView({ onOpenEvent }: Props) {
           </div>
 
           {goalStats.length === 0 ? (
-            <p className="mt-2 rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-              还没有长期目标。立一个，然后让每天的日程为它积累进度。
-            </p>
+            <div className="mt-2 flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-6 text-center">
+              <img src="./img/empty-station.svg" alt="" aria-hidden className="h-24 w-auto rounded-lg object-cover opacity-90" />
+              <p className="text-sm text-muted-foreground">
+                还没有长期目标。立一个，然后让每天的日程为它积累进度。
+              </p>
+            </div>
           ) : (
             <ul className="mt-2 space-y-2">
               {goalStats.map(({ goal, total, done, pct }) => (
@@ -189,12 +307,14 @@ export function GrowthView({ onOpenEvent }: Props) {
                   pct={pct}
                   today={today}
                   confirming={confirmingGoal === goal.id}
+                  planning={planLoading === goal.id}
                   onConfirmAsk={() => setConfirmingGoal(goal.id)}
                   onConfirmCancel={() => setConfirmingGoal(null)}
                   onDelete={() => {
                     deleteGoal(goal.id)
                     setConfirmingGoal(null)
                   }}
+                  onPlan={() => planGoal(goal)}
                 />
               ))}
             </ul>
@@ -235,6 +355,50 @@ export function GrowthView({ onOpenEvent }: Props) {
           )}
         </section>
       </div>
+
+      {/* AI 行动计划预览 */}
+      <Dialog open={planFor !== null} onOpenChange={(o) => !o && setPlanFor(null)}>
+        <DialogContent className="anim-pop sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              AI 行动计划
+            </DialogTitle>
+            <DialogDescription>
+              为目标「{planFor?.title}」生成的步骤，勾选后加入日程并自动关联该目标。
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-[50dvh] space-y-1.5 overflow-y-auto py-1">
+            {planSteps.map((s, i) => (
+              <li key={i}>
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2.5 transition-colors hover:bg-muted/50">
+                  <Checkbox
+                    checked={s.checked}
+                    onCheckedChange={() =>
+                      setPlanSteps((list) => list.map((x, j) => (j === i ? { ...x, checked: !x.checked } : x)))
+                    }
+                    aria-label={`选择步骤「${s.title}」`}
+                    className="mt-0.5"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">{s.title}</span>
+                    {s.note && <span className="mt-0.5 block text-xs text-muted-foreground">{s.note}</span>}
+                  </span>
+                  <span className="tnum shrink-0 text-xs text-muted-foreground">{s.date.slice(5)}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPlanFor(null)}>
+              取消
+            </Button>
+            <Button onClick={applyPlan} disabled={planSteps.every((s) => !s.checked)}>
+              加入日程（{planSteps.filter((s) => s.checked).length}）
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -264,9 +428,11 @@ function GoalCard({
   pct,
   today,
   confirming,
+  planning,
   onConfirmAsk,
   onConfirmCancel,
   onDelete,
+  onPlan,
 }: {
   goal: Goal
   total: number
@@ -274,9 +440,11 @@ function GoalCard({
   pct: number
   today: string
   confirming: boolean
+  planning: boolean
   onConfirmAsk: () => void
   onConfirmCancel: () => void
   onDelete: () => void
+  onPlan: () => void
 }) {
   const daysLeft = goal.deadline
     ? Math.round((parseISODate(goal.deadline).getTime() - parseISODate(today).getTime()) / 86400000)
@@ -295,24 +463,34 @@ function GoalCard({
               : '未设截止日期'}
           </div>
         </div>
-        {confirming ? (
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Button variant="destructive" size="sm" onClick={onDelete}>
-              删除
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onConfirmCancel}>
-              取消
-            </Button>
-          </div>
-        ) : (
+        <div className="flex shrink-0 items-center gap-1">
           <button
-            onClick={onConfirmAsk}
-            aria-label={`删除目标「${goal.title}」`}
-            className="shrink-0 cursor-pointer p-1 text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={onPlan}
+            disabled={planning}
+            className="inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Trash2 className="h-4 w-4" />
+            {planning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            {planning ? '规划中…' : 'AI 规划'}
           </button>
-        )}
+          {confirming ? (
+            <>
+              <Button variant="destructive" size="sm" onClick={onDelete}>
+                删除
+              </Button>
+              <Button variant="ghost" size="sm" onClick={onConfirmCancel}>
+                取消
+              </Button>
+            </>
+          ) : (
+            <button
+              onClick={onConfirmAsk}
+              aria-label={`删除目标「${goal.title}」`}
+              className="cursor-pointer p-1 text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
         <div
@@ -321,7 +499,7 @@ function GoalCard({
         />
       </div>
       <div className="tnum mt-1 text-xs text-muted-foreground">
-        {total === 0 ? '还没有关联的日程，编辑日程时可关联到此目标' : `${done}/${total} 项关联日程已完成 · ${pct}%`}
+        {total === 0 ? '还没有关联的日程，可点「AI 规划」生成，或编辑日程手动关联' : `${done}/${total} 项关联日程已完成 · ${pct}%`}
       </div>
     </li>
   )
