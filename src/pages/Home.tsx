@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, ListTodo, Plus } from 'lucide-react'
+import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, ListTodo, Plus, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Sidebar } from '@/sections/Sidebar'
 import { MonthView } from '@/sections/MonthView'
 import { WeekView } from '@/sections/WeekView'
 import { AgendaView } from '@/sections/AgendaView'
+import { GrowthView } from '@/sections/GrowthView'
 import { EventDialog, type DialogState } from '@/components/EventDialog'
 import { ScheduleProvider, useSchedule } from '@/lib/store'
 import type { EventDraft, ViewMode } from '@/types'
@@ -24,6 +25,7 @@ const MOBILE_NAV: { key: ViewMode; label: string; icon: typeof CalendarDays }[] 
   { key: 'month', label: '月', icon: CalendarDays },
   { key: 'week', label: '周', icon: CalendarRange },
   { key: 'agenda', label: '待办', icon: ListTodo },
+  { key: 'growth', label: '成长', icon: Trophy },
 ]
 
 function useNotificationPermission() {
@@ -79,12 +81,29 @@ function useReminderEngine() {
 }
 
 function Shell() {
-  const { events, upsertEvent, deleteEvent } = useSchedule()
+  const { events, upsertEvent, deleteEvent, xpLog } = useSchedule()
   const [view, setView] = useState<ViewMode>('month')
   const [cursor, setCursor] = useState(() => new Date())
   const [dialog, setDialog] = useState<DialogState>({ open: false })
   const { perm, request } = useNotificationPermission()
   useReminderEngine()
+
+  // 经验到账提示：只为新增的记录弹 toast，历史记录不弹
+  const xpSeenRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (xpSeenRef.current === null) {
+      xpSeenRef.current = xpLog.length
+      return
+    }
+    if (xpLog.length > xpSeenRef.current) {
+      const fresh = xpLog.slice(xpSeenRef.current)
+      xpSeenRef.current = xpLog.length
+      for (const e of fresh) {
+        if (e.amount > 0) toast.success(`+${e.amount} XP`, { description: e.label })
+        else toast(`${e.amount} XP`, { description: e.label })
+      }
+    }
+  }, [xpLog])
 
   const openCreate = useCallback((prefill?: Partial<EventDraft>) => {
     setDialog({ open: true, prefill })
@@ -136,6 +155,7 @@ function Shell() {
   const title = useMemo(() => {
     if (view === 'month') return monthLabel(cursor)
     if (view === 'week') return weekLabel(startOfWeekMonday(cursor))
+    if (view === 'growth') return '目标与成长'
     return '待办清单'
   }, [view, cursor])
 
@@ -181,7 +201,7 @@ function Shell() {
             {title}
           </h1>
 
-          {view !== 'agenda' && (
+          {(view === 'month' || view === 'week') && (
             <div className="flex items-center gap-1">
               <Button variant="outline" size="icon" aria-label="上一页" onClick={() => navigate(-1)}>
                 <ChevronLeft className="h-4 w-4" />
@@ -210,6 +230,7 @@ function Shell() {
             <WeekView cursor={cursor} onOpenEvent={openEdit} onCreateAt={quickAddFromWeek} />
           )}
           {view === 'agenda' && <AgendaView onOpenEvent={openEdit} onCreate={() => openCreate()} />}
+          {view === 'growth' && <GrowthView onOpenEvent={openEdit} />}
         </main>
       </div>
 

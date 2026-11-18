@@ -1,8 +1,9 @@
-import { Bell, BellRing, CalendarDays, CalendarRange, ListTodo, Plus } from 'lucide-react'
+import { Bell, BellRing, CalendarDays, CalendarRange, ListTodo, Plus, Trophy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import type { CategoryId, ViewMode } from '@/types'
 import { useSchedule } from '@/lib/store'
+import { levelFromXp } from '@/lib/game-utils'
 import { CATEGORY_META, CATEGORY_ORDER, todayISO, weekdayOf } from '@/lib/schedule-utils'
 import { cn } from '@/lib/utils'
 
@@ -10,6 +11,7 @@ const NAV: { key: ViewMode; label: string; icon: typeof CalendarDays }[] = [
   { key: 'month', label: '月视图', icon: CalendarDays },
   { key: 'week', label: '周视图', icon: CalendarRange },
   { key: 'agenda', label: '待办清单', icon: ListTodo },
+  { key: 'growth', label: '目标与成长', icon: Trophy },
 ]
 
 interface Props {
@@ -29,7 +31,8 @@ export function Sidebar({
   notifyPermission,
   onRequestNotify,
 }: Props) {
-  const { visibleEvents, filters, toggleCategory } = useSchedule()
+  const { visibleEvents, filters, toggleCategory, totalXp } = useSchedule()
+  const level = levelFromXp(totalXp)
   const today = todayISO()
   const todayEvents = visibleEvents
     .filter((e) => e.date === today && !e.done)
@@ -79,6 +82,30 @@ export function Sidebar({
           </button>
         ))}
       </nav>
+
+      {/* 等级速览 */}
+      <button
+        onClick={() => onViewChange('growth')}
+        aria-label={`当前等级 Lv.${level.level} ${level.title}，查看目标与成长`}
+        className={cn(
+          'mx-4 mt-3 cursor-pointer rounded-lg border bg-card px-3 py-2.5 text-left transition-transform duration-150 hover:scale-[1.01]',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        )}
+      >
+        <div className="flex items-baseline justify-between">
+          <span className="tnum text-sm font-bold">Lv.{level.level}</span>
+          <span className="text-xs font-medium text-primary">{level.title}</span>
+        </div>
+        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-500"
+            style={{ width: `${Math.round((level.intoLevel / level.span) * 100)}%` }}
+          />
+        </div>
+        <div className="tnum mt-1 text-[10px] text-muted-foreground">
+          {totalXp} XP · 距下一级 {level.nextLevelAt - totalXp} XP
+        </div>
+      </button>
 
       <Separator className="mx-5 my-4 w-auto" />
 
