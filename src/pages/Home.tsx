@@ -8,6 +8,7 @@ import { WeekView } from '@/sections/WeekView'
 import { AgendaView } from '@/sections/AgendaView'
 import { GrowthView } from '@/sections/GrowthView'
 import { EventDialog, type DialogState } from '@/components/EventDialog'
+import { AiSettingsDialog } from '@/components/AiSettingsDialog'
 import { ScheduleProvider, useSchedule } from '@/lib/store'
 import type { EventDraft, ViewMode } from '@/types'
 import {
@@ -85,6 +86,7 @@ function Shell() {
   const [view, setView] = useState<ViewMode>('month')
   const [cursor, setCursor] = useState(() => new Date())
   const [dialog, setDialog] = useState<DialogState>({ open: false })
+  const [aiOpen, setAiOpen] = useState(false)
   const { perm, request } = useNotificationPermission()
   useReminderEngine()
 
@@ -183,6 +185,7 @@ function Shell() {
           onOpenEvent={openEdit}
           notifyPermission={perm}
           onRequestNotify={request}
+          onOpenAiSettings={() => setAiOpen(true)}
         />
       </div>
 
@@ -230,7 +233,7 @@ function Shell() {
             <WeekView cursor={cursor} onOpenEvent={openEdit} onCreateAt={quickAddFromWeek} />
           )}
           {view === 'agenda' && <AgendaView onOpenEvent={openEdit} onCreate={() => openCreate()} />}
-          {view === 'growth' && <GrowthView onOpenEvent={openEdit} />}
+          {view === 'growth' && <GrowthView onOpenEvent={openEdit} onOpenAiSettings={() => setAiOpen(true)} />}
         </main>
       </div>
 
@@ -266,7 +269,14 @@ function Shell() {
         </button>
       </nav>
 
-      <EventDialog state={dialog} onClose={closeDialog} onSave={handleSave} onDelete={handleDelete} />
+      <EventDialog
+        state={dialog}
+        onClose={closeDialog}
+        onSave={handleSave}
+        onDelete={handleDelete}
+        onNeedAiConfig={() => setAiOpen(true)}
+      />
+      <AiSettingsDialog open={aiOpen} onClose={() => setAiOpen(false)} />
     </div>
   )
 }

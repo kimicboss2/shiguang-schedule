@@ -1,4 +1,4 @@
-import { Bell, BellRing, CalendarDays, CalendarRange, ListTodo, Plus, Trophy } from 'lucide-react'
+import { Bell, BellRing, Bot, CalendarDays, CalendarRange, ListTodo, Plus, Trophy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import type { CategoryId, ViewMode } from '@/types'
@@ -21,6 +21,7 @@ interface Props {
   onOpenEvent: (id: string) => void
   notifyPermission: NotificationPermission | 'unsupported'
   onRequestNotify: () => void
+  onOpenAiSettings: () => void
 }
 
 export function Sidebar({
@@ -30,6 +31,7 @@ export function Sidebar({
   onOpenEvent,
   notifyPermission,
   onRequestNotify,
+  onOpenAiSettings,
 }: Props) {
   const { visibleEvents, filters, toggleCategory, totalXp } = useSchedule()
   const level = levelFromXp(totalXp)
@@ -185,8 +187,18 @@ export function Sidebar({
         )}
       </div>
 
-      {/* 通知提醒 */}
-      <div className="border-t px-4 py-3">
+      {/* 通知提醒 + AI 设置 */}
+      <div className="space-y-0.5 border-t px-4 py-3">
+        <button
+          onClick={onOpenAiSettings}
+          className={cn(
+            'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          )}
+        >
+          <Bot className="h-3.5 w-3.5" />
+          AI 助手设置
+        </button>
         {notifyPermission === 'granted' ? (
           <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
             <BellRing className="h-3.5 w-3.5 text-primary" />
@@ -196,7 +208,7 @@ export function Sidebar({
           <button
             onClick={onRequestNotify}
             className={cn(
-              'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground',
+              'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             )}
           >

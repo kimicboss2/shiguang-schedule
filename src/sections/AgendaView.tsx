@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CalendarPlus, CheckCircle2, ChevronDown, ListPlus, Swords } from 'lucide-react'
+import { CalendarPlus, ChevronDown, ListPlus, Swords } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { ScheduleEvent } from '@/types'
 import { useSchedule } from '@/lib/store'
@@ -122,8 +122,13 @@ export function AgendaView({ onOpenEvent, onCreate }: Props) {
         </section>
 
         {groups.length === 0 && (
-          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-16 text-center">
-            <CheckCircle2 className="h-10 w-10 text-primary/60" />
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-10 text-center">
+            <img
+              src="./img/empty-station.svg"
+              alt=""
+              aria-hidden
+              className="h-40 w-auto rounded-xl object-cover"
+            />
             <div>
               <p className="font-medium">没有待办的日程</p>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -178,7 +183,7 @@ export function AgendaView({ onOpenEvent, onCreate }: Props) {
             <button
               onClick={() => setShowDone((v) => !v)}
               aria-expanded={showDone}
-              className="flex cursor-pointer items-center gap-1.5 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex cursor-pointer items-center gap-1.5 py-2 text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ChevronDown
                 className={cn('h-4 w-4 transition-transform duration-200', !showDone && '-rotate-90')}
